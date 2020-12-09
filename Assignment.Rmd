@@ -1,0 +1,154 @@
+---
+title: "Assignment"
+author: "tawaku"
+date: "2020/12/8"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Prediction for the Weight Lifting Exercise.
+
+## Overview
+In this assignment, we built the model to predict how well the excercise is done based on data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+## Analysis
+Load libraries to be used in this analysis.
+```{r load_libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(tidyr)
+library(visdat)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+```
+
+Read dumbbell exercise data and replace invalid data to 'NA'.
+```{r read_data}
+data <- read.csv('data/pml-training.csv', na.strings = c('', 'NA', '#DIV/0!'))
+quiz <- read.csv('data/pml-testing.csv', na.strings = c('', 'NA', '#DIV/0!'))
+```
+
+Find columns that have missing data. Remove columns whose 90% of data is missing.
+```{r missing_columns}
+set.seed(1234)
+data %>% sample_n(size = 1000) %>% vis_miss()
+
+na_count <- apply(data, 2, function(x){ sum(is.na(x)) })
+label <- names(na_count[na_count < 0.9 * length(data)])
+
+data <- data %>% select(any_of(label))
+quiz <- quiz %>% select(any_of(label))
+```
+
+Remove columns that are not related to classe for prediction.
+```{r remove_columns}
+label <- label[!(label %in% 
+  c(
+    'X', 'user_name',
+    'raw_timestamp_part_1', 'raw_timestamp_part_2', 
+    'cvtd_timestamp', 'new_window', 'num_window'
+  )
+)]
+
+data <- data %>% select(any_of(label))
+quiz <- quiz %>% select(any_of(label))
+```
+
+Remove the pair of columns with high correlation to reduce the dimension.
+```{r correlation}
+cor_matrix <- cor(data[!names(data) == 'classe'])
+corrplot(
+  cor_matrix, 
+  method = 'color', 
+  type = 'lower', 
+  order = 'hclust', 
+  tl.cex = .90, 
+  tl.col = 'black'
+)
+low_cor_index <- findCorrelation(cor_matrix, cutoff = .70, exact = TRUE)
+
+data <- data %>% select(c(label[low_cor_index], 'classe'))
+quiz <- quiz %>% select(label[low_cor_index])
+```
+
+Review cleaned data. 
+```{r review_data}
+summary(data)
+```
+
+Separate data to training/testing for cross validation.
+```{r data_partition}
+inTrain <- createDataPartition(y = data$classe, p = 0.75, list = FALSE)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+```
+
+Train the model with decision tree.
+Calculate the accuracy of this model and it's 0.676.
+```{r rpart}
+rp_model <- rpart(classe ~ ., data = training, method = 'class')
+rp_pred <- predict(rp_model, testing, type = 'class')
+
+(rp_cm <- table(rp_pred, testing$classe))
+sum(diag(rp_cm))/sum(rp_cm)
+
+rpart.plot(rp_model)
+```
+
+Train the model with random forest.
+Calculate the accuracy of this model and it's 0.987.
+Based on the plot, important variables are roll_belt, yaw_belt and pitch_belt.
+```{r random_forest}
+rf_model <- randomForest(
+    x = training[names(training) != 'classe'],
+    y = training$classe,
+    xtest = testing[names(testing) != 'classe'],
+    ytest = testing$classe,
+    keep.forest = TRUE
+)
+rf_model$confusion
+sum(diag(rf_model$confusion)/sum(rf_model$confusion))
+varImpPlot(rf_model)
+```
+
+Check if PCA will improve the accuracy of model. PC1 ~ PC11 explain about .975.
+```{r pca}
+pca_data <- prcomp(data[names(data) != 'classe'], center = TRUE, scale = TRUE)
+summary(pca_data)
+```
+
+Built random forest with PCA data. PCA data doesn't improve the accuracy.
+```{r train_with_pca_data}
+pca_data <- data.frame(classe = data$classe, pca_data$x)
+pca_data <- pca_data[,1:11]
+
+inTrain <- createDataPartition(y = pca_data$classe, p = 0.75, list = FALSE)
+pca_training <- pca_data[inTrain,]
+pca_testing <- pca_data[-inTrain,]
+
+pca_rf_model <- randomForest(
+    x = pca_training[names(pca_training) != 'classe'],
+    y = pca_training$classe,
+    xtest = pca_testing[names(pca_testing) != 'classe'],
+    ytest = pca_testing$classe,
+    keep.forest = TRUE
+)
+
+pca_rf_model$confusion
+sum(diag(pca_rf_model$confusion)/sum(pca_rf_model$confusion))
+```
+
+## Conclusion
+RandomForest with raw dataset has highest accuracy among models we built to predict how well the excercise is done.
+Predict quiz data with the model.
+```{r predict}
+predict(rf_model, newdata = quiz)
+```
+
