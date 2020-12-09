@@ -2,8 +2,7 @@
 title: "Assignment"
 author: "tawaku"
 date: "2020/12/8"
-output:
-  html_document: default
+output: md_document
 ---
 
 ```{r setup, include=FALSE}
